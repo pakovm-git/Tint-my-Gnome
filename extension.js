@@ -2,99 +2,77 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
+Gio._promisify(Gio.File.prototype, 'load_contents_async');
+Gio._promisify(Gio.File.prototype, 'replace_contents_bytes_async', 'replace_contents_finish');
+
 export default class TintMyGnomeExtension extends Extension {
-    enable() {
-        this._settings = this.getSettings();
+  gtk4ConfigDirectory = Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_config_dir(), 'gtk-4.0']));
+  userGtk4StylesheetFile = this.gtk4ConfigDirectory.get_child('gtk.css');
+  tintMyGnomeGtk4Stylesheet = this.dir.get_child('gtk-4.0').get_child('gtk.css');
 
-        // Setup GTK4 styling backup & symlink
-        const configDir = GLib.get_user_config_dir();
-        const gtk4Dir = Gio.File.new_for_path(GLib.build_filenamev([configDir, 'gtk-4.0']));
+  async enable() {
+    try {
+      this.setupGtkFolders()
 
-        try {
-            if (!gtk4Dir.query_exists(null)) {
-                gtk4Dir.make_directory_with_parents(null);
-            }
-        } catch (e) {
-            console.error(`[Tint my Gnome] Could not create gtk-4.0 dir: ${e.message}`);
-        }
-
-        const userGtkCss = gtk4Dir.get_child('gtk.css');
-        const userGtkCssBackup = gtk4Dir.get_child('gtk.css.backup');
-        const extensionGtkCss = this.dir.get_child('gtk-4.0').get_child('gtk.css');
-
-        let info;
-        try {
-            info = userGtkCss.query_info(
-                Gio.FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET + ',' + Gio.FILE_ATTRIBUTE_STANDARD_TYPE,
-                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
-                null
-            );
-        } catch (e) {
-            // File might not exist
-        }
-
-        try {
-            if (info) {
-                const isOurSymlink = info.get_symlink_target() === extensionGtkCss.get_path();
-
-                if (!isOurSymlink) {
-                    if (userGtkCssBackup.query_exists(null)) {
-                        userGtkCssBackup.delete(null);
-                    }
-                    userGtkCss.move(userGtkCssBackup, Gio.FileCopyFlags.OVERWRITE, null, null);
-                } else {
-                    userGtkCss.delete(null);
-                }
-            }
-
-            userGtkCss.make_symbolic_link(extensionGtkCss.get_path(), null);
-        } catch (e) {
-            console.error(`[Tint my Gnome] Error setting up GTK4 CSS: ${e.message}`);
-        }
+      const oldUserGtk4Stylesheet = await this.readFileContents(this.userGtk4StylesheetFile).catch(this.throwWithMessage("Could not get gtk-4.0/gtk.css contents."))
+      const newUserGtk4Stylesheet = this.addImportToContentsForPath(oldUserGtk4Stylesheet, this.tintMyGnomeGtk4Stylesheet.get_path())
+      await this.replaceFileContents(this.userGtk4StylesheetFile,newUserGtk4Stylesheet).catch(this.throwWithMessage("Could not update gtk-4.0/gtk.css contents."))
     }
-
-    disable() {
-
-        // Restore GTK4 styling from backup
-        const configDir = GLib.get_user_config_dir();
-        const gtk4Dir = Gio.File.new_for_path(GLib.build_filenamev([configDir, 'gtk-4.0']));
-        const userGtkCss = gtk4Dir.get_child('gtk.css');
-        const userGtkCssBackup = gtk4Dir.get_child('gtk.css.backup');
-        const extensionGtkCss = this.dir.get_child('gtk-4.0').get_child('gtk.css');
-
-        let info;
-        try {
-            info = userGtkCss.query_info(
-                Gio.FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET,
-                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
-                null
-            );
-        } catch (e) {
-            // File might not exist
-        }
-
-        try {
-            if (info) {
-                if (info.get_symlink_target() === extensionGtkCss.get_path()) {
-                    userGtkCss.delete(null);
-                }
-            }
-
-            let backupInfo;
-            try {
-                backupInfo = userGtkCssBackup.query_info(
-                    Gio.FILE_ATTRIBUTE_STANDARD_TYPE,
-                    Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
-                    null
-                );
-            } catch (e) { }
-
-            if (backupInfo) {
-                userGtkCssBackup.move(userGtkCss, Gio.FileCopyFlags.OVERWRITE, null, null);
-            }
-        } catch (e) {
-            console.error(`[Tint my Gnome] Error restoring GTK4 CSS: ${e.message}`);
-        }
+    catch (e) {
+      console.error(e)
     }
+  }
 
+  throwWithMessage(m) {
+    return (e)=>{
+      const msg = `[tint-my-gnome@pakovm] "${m}" : ${e}`
+      throw new Error(msg)
+    }
+  }
+
+
+  async disable() {
+    try {
+      const oldUserGtk4Stylesheet = await this.readFileContents(this.userGtk4StylesheetFile).catch(this.throwWithMessage("Could not get gtk-4.0/gtk.css contents."))
+      const newUserGtk4Stylesheet = this.removeTintMyGnomeImportFromContents(oldUserGtk4Stylesheet, this.tintMyGnomeGtk4Stylesheet.get_path())
+      await this.replaceFileContents(this.userGtk4StylesheetFile,newUserGtk4Stylesheet).catch(this.throwWithMessage("Could not update gtk-4.0/gtk.css contents."))
+    }
+    catch (e) {
+      console.error(e)
+    }
+  }
+
+  setupGtkFolders() {
+    if (!this.gtk4ConfigDirectory.query_exists(null)) {
+        this.gtk4ConfigDirectory.make_directory_with_parents(null);
+    }
+  }
+
+  async readFileContents(file) {
+    let string = ''
+    if (file.query_exists(null)) {
+      const [contents] = await file.load_contents_async(null).catch(this.throwWithMessage(`Could not open file for reading ${file.get_path()}`))
+      string = new TextDecoder().decode(contents);
+    }
+    return string
+  }
+
+  async replaceFileContents(file,contents) {
+    try {
+      await file.replace_contents_bytes_async(new GLib.Bytes(contents), null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null)
+
+    } catch (e) {
+      this.throwWithMessage(`Failed to replace contents of file '${file.get_path()}'.`)(e)
+    }
+  }
+
+  addImportToContentsForPath(contents, path) {
+    const contentsWithoutImport = this.removeTintMyGnomeImportFromContents(contents)
+    const importString = `@import '${path}';\n`;
+    return importString + contentsWithoutImport
+  }
+
+  removeTintMyGnomeImportFromContents(contents) {
+    return contents.split('\n').filter(e=>!e.includes('tint-my-gnome@pakovm')).join('\n')
+  }
 }
