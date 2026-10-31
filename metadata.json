@@ -3,11 +3,9 @@
     "name": "Tint my Gnome",
     "description": "A modern GNOME Shell extension to tint your Gnome Shell and LibAdwaita Apps",
     "shell-version": [
-        "48",
-        "49",
-        "50"
+        "51"
     ],
     "url": "https://github.com/pakovm-git/Tint-my-Gnome",
     "settings-schema": "org.gnome.shell.extensions.tint-my-gnome",
-    "version": 20260317
+    "version": 20261101
 }
